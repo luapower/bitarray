@@ -11,7 +11,7 @@ local terra draw(a: bitarrview2d())
 	end
 end
 
-local terra test_view2d()
+local terra test_view2d_getset()
 	var a = bitarrview2d()
 
 	var b: uint64 = 0xdeadbeef1badbeefULL
@@ -30,10 +30,42 @@ local terra test_view2d()
 		end
 	end
 	assert(b == not b0)
-	draw(aa)
 end
-test_view2d()
+test_view2d_getset()
 
-local terra test_view2d_graphic()
-
+local terra test_view2d_fill_arrview()
+	var buf = arr(uint8)
+	buf.len = div_up(71 * 31, 8)
+	var a = bitarrview2d()
+	a.bits = buf.elements
+	a.stride = 71
+	a.w = 59
+	a.h = 29
+	a:asline():fill(false)
+	for y=0,a.h do
+		var ln = a:line(y)
+		ln:fill(y, y, true)
+		ln:fill(a.h-y-1, a.h-y-1, true)
+	end
+	var b = 11
+	a:sub(b, b, a.w - 2*b, a.h - 2*b):fill(true)
+	return a
 end
+
+local terra test_view2d_fill()
+	draw(test_view2d_fill_arrview())
+end
+test_view2d_fill()
+
+local terra test_view2d_copy()
+	var a = test_view2d_fill_arrview()
+	var b = test_view2d_fill_arrview()
+	b:asline():fill(false)
+	var asub = a:sub(5, 5, a.w-10, a.h-10)
+	var bsub = b:sub(5, 5, maxint, maxint)
+	asub:copy(&bsub)
+	print()
+	draw(b)
+end
+test_view2d_copy()
+

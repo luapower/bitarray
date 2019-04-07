@@ -49,41 +49,83 @@ local function view_type(size_t)
 			setbit(self.bits[B], b, v)
 		end
 
-		terra view:sub(offset: size_t, len: size_t)
-			offset = clamp(offset, 0, self.len-1)
-			len = clamp(len, 0, self.len - offset)
-			return view {bits = self.bits, offset = offset, len = len}
+		terra view:range(i: size_t, j: size_t)
+			assert(i >= 0)
+			i = min(i, self.len)
+			j = min(max(i, j), self.len)
+			return i, j-i
 		end
+
+		terra view:sub(i: size_t, j: size_t)
+			var start, len = self:range(i, j)
+			return view {bits = self.bits, offset = self.offset + start, len = len}
+		end
+
+		terra view:first_and_last_bytes(i: size_t, bits: size_t)
+			i = clamp(i, 0, self.len)
+			bits = clamp(bits, 0, self.len-i)
+			var offset = self.offset + i --bit offset in buffer
+			var offset1 = offset and 7 --bit offset inside first byte
+			var offset2 = 0 --bit offset inside last byte
+			var bits1 = min(8 - offset1, bits) --number of bits in first byte in 0..8
+			var rbits = max(0, bits - bits1) --remaining bits after first byte
+			var bits2 = rbits and 7 --number of bits in last byte in 0..7
+			var bytes = rbits >> 3 --number of full bytes, first byte always excepted
+			var mask1 = ((1 << bits1) - 1) << offset1 --bit mask of first byte
+			var mask2 = ((1 << bits2) - 1) << offset2 --bit mask of last byte
+			var byte1 = offset >> 3 --byte offset of first byte
+			var byte2 = byte1 + 1 + bytes --byte offset of last byte when bits2 > 0
+			if bits2 == 0 then --last byte is empty
+				dec(byte2) --consider the last non-empty byte as the last byte
+				if byte2 == byte1 then --last byte is first byte
+					mask2 = mask1
+				else --last byte is a full byte
+					mask2 = 0xff
+				end
+			end
+			return byte1, mask1, byte2, mask2
+		end
+
+		view.methods.fill = overload'fill'
+		view.methods.fill:adddefinition(terra(self: &view, i: size_t, bits: size_t, val: bool)
+			var i1, m1, i2, m2 = self:first_and_last_bytes(i, bits)
+			var bytes = i2 - i1 - 1
+			var v = iif(val, 0xff, 0)
+			setbits(self.bits[i1], v, m1)
+			if bytes > 0 then
+				fill(self.bits + i1 + 1, v, bytes)
+			end
+			setbits(self.bits[i2], v, m2)
+		end)
+		view.methods.fill:adddefinition(terra(self: &view, val: bool)
+			self:fill(0, self.len, val)
+		end)
 
 		terra view:copy(dest: &view)
 			var bits = min(self.len, dest.len)
-			var offset1 = self.offset and 7 --offset in first byte
-			if offset1 == (dest.offset and 7) then --alignments match
-				var bits1 = min((8 - offset1) and 7, bits) --number of bits in first partial byte
-				var bits2 = (bits - bits1) and 7 --number of bits in last partial byte
-				var bytes = (bits - bits1) >> 3 --number of full bytes
-				--copy first partial byte bit-by-bit
-				for i = offset1, offset1 + bits1 do
-					dest:set(i, self:get(i))
+			if (self.offset and 7) == (dest.offset and 7) then --alignments match
+				var si1, sm1, si2, sm2 = self:first_and_last_bytes(0, bits)
+				var di1, dm1, di2, dm2 = dest:first_and_last_bytes(0, bits)
+				assert(sm1 == dm1 and sm2 == dm2 and si2-si1 == di2-di1)
+				setbits(dest.bits[di1], self.bits[si1], sm1)
+				var bytes = si2 - si1 - 1
+				if bytes > 0 then
+					copy(
+						dest.bits + di1 + 1,
+						self.bits + si1 + 1,
+						bytes)
 				end
-				--copy in-between bytes in bulk
-				copy(
-					dest.bits + div_up(dest.offset, 8),
-					self.bits + div_up(self.offset, 8),
-					bytes)
-				--copy last partial byte bit-by-bit
-				var offset2 = [int](bits1 > 0) + (bytes << 3)
-				for i = offset2, offset2 + bits2 do
-					dest:set(i, self:get(i))
-				end
+				setbits(dest.bits[di2], self.bits[si2], sm2)
 			else --bit-by-bit copy
-				for i=0,self.len do
+				for i=0,bits do
 					dest:set(i, self:get(i))
 				end
 			end
 		end
 
-		setinlined(view.methods, function(m) return m ~= 'copy' end)
+		setinlined(view.methods, function(m)
+			return m ~= 'copy' and m ~= 'fill'
+		end)
 
 	end)
 
@@ -137,15 +179,15 @@ local function view_type(size_t)
 		end)
 
 		terra view:get(x: size_t, y: size_t)
-			assert(x >= 0 and x < self.w
-				and y >= 0 and y < self.h)
+			x = clamp(x, 0, self.w-1)
+			y = clamp(y, 0, self.h-1)
 			var B, b = addr(self, x, y)
 			return getbit(self.bits[B], b)
 		end
 
 		terra view:set(x: size_t, y: size_t, v: bool)
-			assert(x >= 0 and x < self.w
-				and y >= 0 and y < self.h)
+			x = clamp(x, 0, self.w-1)
+			y = clamp(y, 0, self.h-1)
 			var B, b = addr(self, x, y)
 			setbit(self.bits[B], b, v)
 		end
@@ -165,6 +207,27 @@ local function view_type(size_t)
 			line.offset = self.offset + y * self.stride
 			line.len = self.w
 			return line
+		end
+
+		--create a 1-D view of the entire 2-D view.
+		terra view:asline()
+			var a = bitarrview(size_t)
+			a.bits = self.bits
+			a.offset = self.offset
+			a.len = self.h * self.stride
+			return a
+		end
+
+		terra view:fill(val: bool)
+			if self.stride == self.w then --contiguous buffer, fill whole
+				self:asline():fill(val)
+			else --fill line-by-line
+				var line = self:line(0)
+				for i = 0, self.h do
+					line:fill(0, line.len, val)
+					inc(line.offset, self.stride)
+				end
+			end
 		end
 
 		terra view:copy(dest: &view)
@@ -188,7 +251,7 @@ local function view_type(size_t)
 				for i=0,self.h do
 					sline:copy(&dline)
 					inc(sline.offset, self.stride)
-					inc(dline.offset, self.stride)
+					inc(dline.offset, dest.stride)
 				end
 			end
 		end
