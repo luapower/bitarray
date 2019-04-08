@@ -103,11 +103,17 @@ local function view_type(size_t)
 
 		terra view:copy(dest: &view)
 			var bits = min(self.len, dest.len)
+			var overlap = dest.bits + dest.offset >= self.bits + self.offset
+				and dest.bits + dest.offset < self.bits + self.offset + self.len
 			if (self.offset and 7) == (dest.offset and 7) then --alignments match
 				var si1, sm1, si2, sm2 = self:first_and_last_bytes(0, bits)
 				var di1, dm1, di2, dm2 = dest:first_and_last_bytes(0, bits)
 				assert(sm1 == dm1 and sm2 == dm2 and si2-si1 == di2-di1)
-				setbits(dest.bits[di1], self.bits[si1], sm1)
+				if not overlap then
+					setbits(dest.bits[di1], self.bits[si1], sm1)
+				else
+					setbits(dest.bits[di2], self.bits[si2], sm2)
+				end
 				var bytes = si2 - si1 - 1
 				if bytes > 0 then
 					copy(
@@ -115,10 +121,20 @@ local function view_type(size_t)
 						self.bits + si1 + 1,
 						bytes)
 				end
-				setbits(dest.bits[di2], self.bits[si2], sm2)
+				if not overlap then
+					setbits(dest.bits[di2], self.bits[si2], sm2)
+				else
+					setbits(dest.bits[di1], self.bits[si1], sm1)
+				end
 			else --bit-by-bit copy
-				for i=0,bits do
-					dest:set(i, self:get(i))
+				if not overlap then
+					for i=0,bits do
+						dest:set(i, self:get(i))
+					end
+				else
+					for i=bits-1,-1,-1 do
+						dest:set(i, self:get(i))
+					end
 				end
 			end
 		end
@@ -246,12 +262,24 @@ local function view_type(size_t)
 					self.bits + (self.offset << 3),
 					self.h * (self.stride << 3))
 			else --copy line-by-line
-				var sline = self:line(0)
-				var dline = dest:line(0)
-				for i=0,self.h do
-					sline:copy(&dline)
-					inc(sline.offset, self.stride)
-					inc(dline.offset, dest.stride)
+				var overlap = dest.bits + dest.offset >= self.bits + self.offset
+					and dest.bits + dest.offset < self.bits + self.offset + self.h * self.stride
+				if not overlap then
+					var sline = self:line(0)
+					var dline = dest:line(0)
+					for i=0,self.h do
+						sline:copy(&dline)
+						inc(sline.offset, self.stride)
+						inc(dline.offset, dest.stride)
+					end
+				else
+					var sline = self:line(self.h-1)
+					var dline = dest:line(self.h-1)
+					for i=self.h-1,-1,-1 do
+						sline:copy(&dline)
+						dec(sline.offset, self.stride)
+						dec(dline.offset, dest.stride)
+					end
 				end
 			end
 		end
@@ -282,3 +310,7 @@ low.bitarrview2d = macro(
 
 --dynamically allocated 2D bitarray.
 
+
+low.bitarr2d = macro(function()
+
+end)
