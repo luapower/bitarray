@@ -308,9 +308,7 @@ low.bitarrview2d = macro(
 	end, view_type
 )
 
---dynamically allocated 2D bitarray.
-
-
+--TODO: dynamically allocated 2D bitarray.
 low.bitarr2d = macro(function()
 
 end)
