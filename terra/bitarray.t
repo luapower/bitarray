@@ -7,10 +7,11 @@
 
 ]]
 
-if not ... then require'bitarray_test'; return end
+if not ... then require'terra/bitarray_test'; return end
 
-setfenv(1, require'low')
-require'box2dlib'
+setfenv(1, require'terra/low')
+require'terra/box2d'
+local rect = rect(num)
 
 local function view_type(size_t)
 
@@ -158,7 +159,7 @@ local view_type = function(size_t)
 	return view_type(size_t)
 end
 
-low.bitarrview = macro(
+bitarrview = macro(
 	function(size_t)
 		local view_type = view_type(size_t and size_t:astype())
 		return `view_type(nil)
@@ -211,7 +212,7 @@ local function view_type(size_t)
 		--create a view representing a rectangular region inside this view.
 		--the new view references the same buffer, nothing is copied.
 		terra view:sub(x: size_t, y: size_t, w: size_t, h: size_t)
-			x, y, w, h = box2d.intersect(x, y, w, h, 0, 0, self.w, self.h)
+			x, y, w, h = rect.intersect(x, y, w, h, 0, 0, self.w, self.h)
 			return view {bits = self.bits, offset = offset(self, x, y),
 				stride = self.stride, w = w, h = h}
 		end
@@ -301,7 +302,7 @@ local view_type = function(size_t)
 	return view_type(size_t)
 end
 
-low.bitarrview2d = macro(
+bitarrview2d = macro(
 	function(size_t)
 		local view_type = view_type(size_t and size_t:astype())
 		return `view_type(nil)
@@ -309,6 +310,6 @@ low.bitarrview2d = macro(
 )
 
 --TODO: dynamically allocated 2D bitarray.
-low.bitarr2d = macro(function()
+bitarr2d = macro(function()
 
 end)
